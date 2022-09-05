@@ -1,0 +1,312 @@
+---
+title: "Matt's Music Data Analysis"
+output: html_notebook
+---
+
+### Loading and Reading the Data
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+#Reading in data
+music <- read_csv("data/hot-100-current.csv")
+```
+
+### Getting to Know the Data
+
+```{r}
+summary(music)
+```
+
+#### What does each row represent?
+
+Each row corresponds to a specific song (in space 1 through 100) of a particular week's top 100 list. Therefore, there are 100 rows per specified week in the data. There are 334,400 of these songs.
+
+#### Digging into the Summary Statistics
+
+The data goes back to 1958 and goes through 2022.
+
+The median peak position of a given song is position #38. The average peak position is #41. the fact that average is greater than median suggests a slight rightward skew of the data meaning that there's a longer right tail. I.e. more songs are clustered around the higher positions. This makes sense since it's relatively harder to land at the top of the list.
+
+On average, a song is on the charts about 9 weeks.
+
+#### Some possible questions:
+
+#### 1. Do remixes tend to perform better than the originals?
+
+```{r}
+#First we need to find the remixes in the dataset
+music_remixes <- music %>%
+  filter(grepl("remix", title, ignore.case = TRUE)) #Search for "remix" regardless of lowercase/uppercase and return the rows
+
+#Instead of having to sift through the pages of the music_remixes df, we can make the title column a factor and apply the summary function to it:
+music_remixes$title <- as.factor(music_remixes$title)
+summary(music_remixes$title)
+```
+
+We have 8 remixes in the data. Now, we need to see if the original versions of any of these remixes also made the list in earlier years.
+
+```{r}
+#Create a vector of the names of originals so we can search in the original dataframe:
+remix_search_terms <- c('Cold Heart', 'No New Friends', 'Sympathy for the Devil',
+                        'Karate Chop', 'Outta Control', 'Roxanne', 'Sleazier', 
+                        'Turn It Up')
+
+#Now search for these terms in the original dataframe
+#original_versions_remixes <- music %>%
+  #filter(remix_search_terms, title, ignore.case = TRUE)
+
+#This errors because the function expects an entity of size 1, not size 8. I thought I could plug a vector of values in, but that doesn't seem to work. Instead, I will apply the filters one-by-one:
+
+original_versions_remixes <- music %>%
+  filter(grepl('Cold Heart', title, ignore.case = TRUE) |
+         grepl('No New Friends', title, ignore.case = TRUE) | 
+         grepl('Sympathy for the Devil', title, ignore.case = TRUE) |
+         grepl('Karate Chop', title, ignore.case = TRUE) |
+         grepl('Outta Control', title, ignore.case = TRUE) |
+         grepl('Roxanne', title, ignore.case = TRUE) |
+         grepl('Sleazier', title, ignore.case = TRUE) |
+         grepl('Turn It Up', title, ignore.case = TRUE)
+         )
+
+original_versions_remixes
+```
+
+Looking through our results, it looks like we have two cases we can look at. There are multiple versions of Roxanne and Sympathy for the Devil. The other remixes don't have original versions that made the top 100 list.
+
+We can look at the peak position of both the original and remix for each of these songs.
+
+```{r}
+#Roxanne peak position of original vs. remix
+roxanne_original <- music %>%
+  filter(title == 'Roxanne' & performer == 'The Police') %>% #Need to add the additional filter criterium on performer because there are multiple Roxannes in the data
+  slice(which.min(peak_pos)) #Need the best the song ever performed (i.e. the minimum peak position)
+
+roxanne_remix <- music %>%
+  filter(title == 'Roxanne `97 - Puff Daddy Remix') %>% 
+  slice(which.min(peak_pos)) 
+
+```
+
+The original Roxanne reached a peak position of 32 in April of 1979. The remix only reached a peak position of 59 in January of 1998.
+
+Sympathy for the Devil has a little bit of a different story. We have a Guns N' Roses remix in 1994 of the original Rolling Stones and then we have a different remix in 2003 by the Rolling Stones.
+
+```{r}
+#Sympathy for the Devil peak position of original vs. remix
+devil_1994 <- music %>%
+  filter(title == 'Sympathy For The Devil ("Interview With The Vampire")') %>% 
+  slice(which.min(peak_pos)) 
+
+devil_2003 <- music %>%
+  filter(title == 'Sympathy For The Devil (Remixes)') %>% 
+  slice(which.min(peak_pos)) 
+
+```
+
+Here, we have a peak position of 55 for the 1994 version and 97 for the 2003 version.
+
+**Takeaway:** Later versions of songs don't seem to be as popular. For a story, we might ask why this is. Are there any counterexamples?
+
+**Question fully answered?** Sort of. We would need to find a bigger sample to answer the question more fully.
+
+#### 2. What are the most popular songs this year vs. the first year we had data available?
+
+For this, I will look at the first year, 1958, and this year, 2022, group by song title and find an average position ranking from the current week column.
+
+```{r}
+#First I need to take care of the date column. It's not in a date format currently.
+#I could convert the whole column into a date format, but for this question, I'm just 
+#going to separate it out into different columns:
+
+music_dates_separated <- music %>%
+  separate(chart_week, c("year", "month", "date")) %>%
+  mutate(year=as.integer(year)) #Convert to numeric so that we can perform our analysis
+
+#Dataframe with 2022 songs
+music_2022 <- music_dates_separated %>%
+  filter(year==2022) %>%
+  group_by(title) %>%
+  summarize(mean(current_week)) %>%
+  rename(average_position_year=`mean(current_week)`) %>%
+  arrange(average_position_year) #We want the default of ascending order to capture the best songs
+
+head(music_2022, n=10) #Show the top 10 songs of 2022
+
+```
+
+```{r}
+#And for 1958 when data was first available
+
+music_1958 <- music_dates_separated %>%
+  filter(year==1958) %>%
+  group_by(title) %>%
+  summarize(mean(current_week)) %>%
+  rename(average_position_year=`mean(current_week)`) %>%
+  arrange(average_position_year) #We want the default of ascending order to capture the best songs
+
+head(music_1958, n=10) #Show the top 10 songs of 2022
+
+```
+
+**Takeaway:** Interesting! People really like holiday music these days. Four holiday songs broke the top 10 so far in 2022. There were no holiday songs in 1958. (Maybe this explains how holiday-themed stores that only sell holiday items and play holiday music can stay in business throughout the year!) We'd have to be a little careful with our takeaways because these are not necessarily the most popular songs. These are just the songs that had the highest rankings when they were on the list. (They could have been on the list for just a couple of weeks, as might be the case with the Christmas music.)
+
+It also appears that since the average position numbers were higher in 1958, there might have been more heterogeneity in music taste back then. In contrast, in 2022, there were multiple songs with very high rankings, suggesting that more people coalesced around these songs.
+
+**Question fully answered?** The question is broadly answered, with some interesting takeaways about perhaps changing music tastes.
+
+#### 3. How long throughout the year does holiday music stay popular? (just in December and November? Or other times as well?)
+
+First I want to get a sense of what the most popular holiday music is in general at the time when it is presumably most popular (December):
+
+```{r}
+#Find the most popular music in December 2022
+#holiday_music <- music_dates_separated %>%
+  #filter(year==2022 & month==12)
+
+#This errored because my month column was still a character from when I separated it. 
+#I need to make it numeric. Also, 12/2022 hasn't happened yet! 
+#So I will find the most popular holiday music based on 12/2021.
+  
+music_dates_separated$month <- as.numeric(music_dates_separated$month)
+
+holiday_music <- music_dates_separated %>%
+  filter(year==2021 & month==12) %>%
+  group_by(title) %>%
+  summarize(mean(current_week)) %>%
+  rename(average_position_year=`mean(current_week)`) %>%
+  arrange(average_position_year)
+
+```
+
+There's some holiday and non-holiday music sprinkled in there, but I will take the top 5 holiday songs: All I Want For Christmas Is You, Rockin' Around The Christmas Tree, Jingle Bell Rock, A Holly Jolly Christmas and Feliz Navidad. And now I want to see their relative monthly popularity.
+
+```{r}
+
+popular_holiday_music <- music_dates_separated %>%
+  filter(year==2021) %>% 
+  filter(title=="All I Want For Christmas Is You" |
+          title=="Rockin' Around The Christmas Tree" |
+           title=="Jingle Bell Rock" |
+           title=="A Holly Jolly Christmas" | 
+         title=="Feliz Navidad") %>%
+  group_by(month, title) %>%
+  summarize(mean(current_week)) %>%
+  rename(average_position_month=`mean(current_week)`) 
+
+```
+
+**Takeaway:** People appear to have less of an appetite for holiday music before the holiday (in November) than they do after the holiday (in January) --- unless, of course, we're talking about "All I Want For Christmas Is You," which is popular in November, December and January.
+
+**Question fully answered?** The question is largely answered. For a story, I would want to add more context and check other years and if this trend has changed over time.
+
+#### 4. Of the most popular songs on the list each year, how long has it taken them, on average, to drop on the list over time?
+
+I'm curious about people's consumption habits and their attention spans. Do songs stay higher on the list for longer or shorter these days compared with in the past?
+
+To find the most popular song of each year, I'm going to find the song that has the lowest average measure in the "current_week" column for the year.
+
+```{r}
+
+most_popular_each_year <- music_dates_separated %>%
+  group_by(year,title) %>%
+  summarize(mean(current_week)) %>%
+  slice(which.min(`mean(current_week)`)) %>%
+  rename(average_position_year=`mean(current_week)`) 
+
+```
+
+Now that I have the most popular title by year (at least by the metric of being the highest on the list of the time it's been on the list), I want to see how long it's taken for the song to fall each year.
+
+```{r}
+
+#Using a join to get a dataframe just with the most popular titles
+most_popular_each_year_expanded <- most_popular_each_year %>%
+  inner_join(music_dates_separated)
+
+#Now I want to determine the weeks on the chart for each of these popular songs each year
+
+weeks_on_list <- most_popular_each_year_expanded %>%
+  group_by(title) %>%
+  slice(which.max(wks_on_chart)) %>%
+  arrange(year)
+
+#Quick visualization to get the idea
+
+ggplot(weeks_on_list, aes(x=year, y=wks_on_chart)) +
+  geom_bar(stat='identity') +
+  coord_flip() +
+  theme_minimal()
+
+```
+
+**Takeaway:** It's possible that the most popular songs might be on the list a little longer these days than in the past, though we'd need to test this hypothesis with more song data. Again, we also see that people really like "All I Want For Christmas Is You."
+
+**Question fully answered?** In general, we got some answers to our original question, but this is really an example of doing some analysis and finding that there really might not be much of a story here.
+
+#### 5. What is the impact of so called protest songs in the aftermath of moments of great cultural trauma or other mass cultural movements?
+
+This question was inspired by this article (<https://lookout.co/santacruz/wallace-baine/story/2022-06-05/where-is-protest-song-we-need-in-2022>) that talks about the release of the song "Ohio" after four unarmed college students were shot and killed at Kent State University in Ohio when National Guardsmen opened fire on Vietnam War protesters in 1970. The article asks what our modern-day 2022 equivalent of "Ohio" is.
+
+I wanted to take a look at other protest songs and their longevity.
+
+```{r}
+
+#Taking a closer look at Ohio:
+
+ohio <- music_dates_separated %>%
+  filter(title=="Ohio")
+
+#On the charts for 9 weeks in 1970
+
+```
+
+```{r}
+
+#Looking at other so-called "protest songs" that are in response to major events/respond to cultural moments
+
+#Songs written after the death of George Floyd (if they exist in the list)
+george_floyd <- music_dates_separated %>%
+  filter(title=="The Bigger Picture" | title == "American Silence" | title== "Sweeter")
+
+#"Let's Go Brandon" protest song
+brandon <- music_dates_separated %>%
+  filter(title=="Let's Go Brandon" | title=="Lets Go Brandon")
+
+#How does this performance compare with the average song on the chart in 2020? 
+
+music_2020 <- music_dates_separated %>%
+  filter(year==2020) %>%
+  group_by(year, title) %>%
+  summarize(mean(wks_on_chart), mean(current_week)) 
+
+#Mean of means:
+mean(music_2020$`mean(wks_on_chart)`)
+#5.6 weeks
+mean(music_2020$`mean(current_week)`)
+#Avg. position: 63
+
+music_2021 <- music_dates_separated %>%
+  filter(year==2021) %>%
+  group_by(year, title) %>%
+  summarize(mean(wks_on_chart), mean(current_week)) 
+
+#Mean of means:
+mean(music_2021$`mean(wks_on_chart)`)
+#5.9 weeks
+mean(music_2021$`mean(current_week)`)
+#Avg. position: 63
+
+```
+
+I chose two songs that might be classified as protest songs (by different groups of people, to be sure) to determine their relative popularity, as compared with the overall popularity of the songs in the years they were published.
+
+"The Bigger Picture" by Lil Baby was on the charts for 20 weeks and reached a peak position of 3. "Let's Go Brandon" or "Lets Go Brandon" were on the charts for a couple of weeks and reached peak positions in the 30s.
+
+On average, across all songs, songs tend to stay on the chart for about 6 weeks and have an average position of 63.
+
+**Takeaway:** We would need a bigger sample size of so-called protest songs, but we can see that in one case, one protest song (The Bigger Picture) largely outperformed the performance of the typical song on the chart.
+
+**Question fully answered?** I'm interested in this idea of a "protest song" being released in response to a major cultural/political event. I'd like to collect more songs that fit this criteria and see how they have performed over time.

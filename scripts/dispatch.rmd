@@ -1,0 +1,70 @@
+---
+title: "Dispatch"
+output:
+html_notebook: default
+---
+
+```{r}
+library(tidyverse)
+```
+
+Load the data downloaded from [como.gov: 911 dispatch](https://www.como.gov/CMS/911dispatch/police.php?type=&keyword=&Start_Date=2021-01-01&End_Date=2022-01-01&Submit=Filter)
+
+```{r}
+dispatch <- read_csv("data/dispatch.csv")
+```
+
+First things first (always do this with new data):
+
+-   How many rows? What is one row?
+
+ - 57,493 rows
+ - It's a dispatch, but there are some exact duplicates and some duplicates where the nature differs. Should ask the city.
+
+```{r}
+nrow(dispatch)
+```
+
+```{r}
+#Could do 
+n_distinct(dispatch$InNum)
+
+#Or could do this to find the ones that are duplicate:
+dispatch_duplicates <- dispatch %>% 
+  count(InNum) %>%
+  filter(n>1)
+
+dispatch_duplicates %>% left_join(dispatch)
+
+dispatch %>%
+  filter(InNum=='2022016671')
+```
+
+-   What's in each field?
+
+* Need to convert CallDateTime to date format
+
+```{r}
+
+dispatch %>% count(CallDateTime)
+
+dispatch %>% count(Address)
+
+dispatch$ExtNatureDisplayName <- as.factor(dispatch$ExtNatureDisplayName)
+summary(dispatch$ExtNatureDisplayName)
+
+summary(dispatch$ExtNatureDisplayName)
+
+```
+
+
+```{r}
+
+dispatch %>% 
+  group_by(PolArea, ExtNatureDisplayName) %>% 
+  summarize(total_incidents = n())
+  
+
+```
+
+
