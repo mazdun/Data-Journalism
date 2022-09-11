@@ -1,0 +1,106 @@
+---
+title: "Dispatch Geospatial"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(sf) #For st_as_sf function
+library(maps) #For plotting
+```
+
+```{r}
+dispatch <- read_csv("data/dispatch.csv")
+```
+
+```{r}
+
+#We need a dataframe of type sf in order to deal with geospatial data, so we'll need to convert dispatch.
+
+#We can't have any missing values in the geo columns, so we'll have to remove them
+
+dispatch_geo <- dispatch %>%
+  drop_na(geox) %>%
+  drop_na(geoy)
+
+dispatch_geo <- st_as_sf(x = dispatch_geo,                         
+           coords = c("geox", "geoy"))
+
+#Now we have a geometry column in our dispatch_geo dataframe
+
+```
+
+Now that we have a geometry column, we need to declare what coordinate reference system (CRS) we're using before we can convert it into a CRS that is more useful.
+
+The documentation is unclear about what CRS we're using. However, Boone County data shows that they are using a projection in feet and that they are using an ESRI projection (<https://maps.showmeboone.com/viewers/sd_incidentviewer/>).
+
+A Google search of "missouri ESRI crs feet" returns ESRI:102697 as a good candidate: <https://epsg.io/102697>
+
+We can try setting our projection to ESRI:102697.
+
+```{r}
+#Set the CRS of our dispatch_geo data to ESRI:102697
+
+st_crs(dispatch_geo) <- "ESRI:102697"
+
+```
+
+```{r}
+#Now convert to EPSG 4269, the most common projection for the U.S. https://epsg.io/4269 used for degrees
+
+dispatch_geo <- st_transform(dispatch_geo, crs = 4269)
+
+```
+
+```{r}
+
+#Some plotting to gut check: 
+
+state_map_data <- map('state', fill = TRUE, plot = FALSE) %>% st_as_sf()
+
+missouri <- state_map_data %>% 
+  filter(ID == 'missouri')
+
+ggplot() +
+  geom_sf(data = missouri) +
+  geom_sf(data = dispatch_geo) +
+  theme_void()
+
+```
+
+### Converting to Zip Code
+
+```{r}
+
+#install.packages("ggmap")
+library(ggmap)
+library(devtools)
+install_github('mhudecheck/revgeo')
+library(revgeo)
+
+```
+
+First, we need a shp file of all of the U.S. ZIP codes (downloaded from here: https://catalog.data.gov/dataset/tiger-line-shapefile-2019-2010-nation-u-s-2010-census-5-digit-zip-code-tabulation-area-zcta5-na). 
+
+This will give us polygon data for all of the ZIP codes. We're then going to perform a join to see where our points in our dispatch data intersect the polygons.
+
+```{r}
+
+#Read in a shp file of US zipcodes 
+us_zipcodes <- read_sf('data/tl_2019_us_zcta510.shp')
+
+#Make sure the zipcodes are in the same CRS as the dispatch data
+us_zipcodes <- st_transform(us_zipcodes, 4269)
+
+#Use smaller subset of dispatch_geo data so as not to take too much time/computing power
+
+dispatch_geo_smaller <- dispatch_geo %>%
+  slice(1:100) 
+
+zip_codes <- dispatch_geo_smaller %>%
+  st_join(us_zipcodes)
+
+```
+
+We could expand this to the whole dataset, but it would take a very long time to complete the join. If we were in more of a hurry, we could just subset the us_zipcodes to only Missouri zip codes, and that would speed up the join.
+
