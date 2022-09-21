@@ -1,0 +1,269 @@
+---
+title: "MZ Deaths"
+output: html_notebook
+---
+
+Data downloaded from unique request link at [CDC Wonder](https://wonder.cdc.gov/controller/datarequest/D76) Downloaded: September 19, 2022
+
+```{r}
+
+library(tidyverse)
+#install.packages('janitor')
+library(janitor)
+```
+
+```{r}
+deaths <- suppressMessages(suppressWarnings(read_tsv("data/Underlying Cause of Death, 1999-2020.txt")))
+```
+
+To transform: Remove the notes at the bottom Clean up the header row Turn the numeric column into numbers
+
+Clean header row
+
+```{r}
+deaths <- clean_names(deaths)
+```
+
+Integrity checks:
+
+```{r}
+deaths %>% count(state)
+deaths %>% filter(is.na(state)) #These were the notes; no longer a problem
+
+deaths %>% count(icd_10_113_cause_list)
+
+deaths %>% count(deaths) %>% arrange(desc(n)) #4,981 suppressed
+```
+
+Pull out the notes
+
+```{r}
+notes <- deaths %>% filter(!is.na(notes)) %>%
+  select(notes)
+
+deaths <- deaths %>% select(-notes)
+```
+
+Turn deaths and pop into numeric
+
+```{r}
+deaths <- deaths %>% mutate(num_deaths = as.numeric(deaths))
+deaths <- deaths %>% mutate(num_population = as.numeric(population))
+```
+
+## Questions
+
+### How many people die in the US every year?
+
+I think, because of the limitations of this dataset (with suppressed data), the most efficient way to answer this question is actually to go back to our CDC Wonder Tool, check the boxes for all states and all causes of death, select a year and read that information from the simple tables the CDC produces.
+
+For example, for [2020](https://wonder.cdc.gov/controller/datarequest/D76;jsessionid=2B7A34B4DA2C3A886DA3648CB183), the table showed 3,383,729 deaths.
+
+By changing the date field and reading the tables, we get the following:
+
+| Year | U.S. Deaths | Age-Adjusted Rate Per 100K |
+|------|-------------|----------------------------|
+| 2020 | 3,383,729   | 835.4                      |
+| 2019 | 2,854,838   | 715.2                      |
+| 2018 | 2,839,205   | 723.6                      |
+| 2017 | 2,813,503   | 731.9                      |
+| 2016 | 2,744,248   | 728.8                      |
+| 2015 | 2,712,630   | 733.1                      |
+
+**Putting this finding into words:** From 2015 to 2019, around 2.8 million Americans died every year. At the same time that the number of deaths was holding relatively steady, the population was increasing. That meant that the death rate per 100,000 people in America was largely declining. The COVID-19 pandemic in 2020 rapidly drove up both the number of deaths --- about 3.4 million --- and the death rate --- about 835 out of every 100,000 people.
+
+```{r}
+#COVID-19
+
+covid <- deaths %>%
+  filter(grepl("COVID",icd_10_113_cause_list)) %>%
+  na.omit() %>% #2018 and 2019 appear in the data with COVID but numbers are NA
+  summarize(total_covid_deaths_2020 = sum(num_deaths))
+
+#350K COVID deaths in 2020 (likely an undercount)
+```
+
+### What caused the most deaths in Missouri?
+
+```{r}
+#First, filter on Missouri.
+missouri_leading_deaths <- deaths %>%
+  filter(state=='Missouri') %>%
+  group_by(year) %>%
+  na.omit %>% #Get rid of the NAs for the max calculation next
+  slice(which.max(num_deaths))
+```
+
+Major cardiovascular diseases caused the most deaths in Missouri in 2018, 2019 and 2020. It's important to know what this includes. According to the CDC [documentation](https://www.cdc.gov/nchs/data/dvs/Multiple-Cause-Record-Layout-2020.pdf), this includes dozens of subcategories including diseases involving the heart directly, high blood pressure and other diseases involving the circulatory system.
+
+I want to have some idea of how many people die from major cardiovascular diseases in Missouri versus the next leading cause.
+
+```{r}
+#First, I will take 2018
+missouri_2018 <- deaths %>%
+  filter(state=='Missouri' & year==2018) %>%
+  na.omit %>%
+  arrange(desc(num_deaths)) %>%
+  head(10) #just get top 10
+
+```
+
+This is somewhat interesting. "Major cardiovascular diseases" is in the number one spot, and it is an umbrella category that includes diseases of the heart (spot 2), ischemic heart diseases (spot 4), other heart diseases (spot 6), other forms of chronic ischemic heart disease (spot 7) and all other forms of chronic ischemic heart disease (spot 10). However, the categories do not add up (i.e. the sum of the parts add up to more than the whole). That implies that these categories are not mutually exclusive and collectively exhaustive, or in other words, a death can have multiple cause of death codes attached to it.
+
+For comparison, it's good to look at the next leading non-cardiovascular related cause of death. That is malignant neoplasms (13k) and this catch-all category "all other diseases" (7k). We can do this same analysis for 2019 and 2020.
+
+```{r}
+
+missouri_2019 <- deaths %>%
+  filter(state=='Missouri' & year==2019) %>%
+  na.omit %>%
+  arrange(desc(num_deaths)) %>%
+  head(10) #just get top 10
+
+missouri_2020 <- deaths %>%
+  filter(state=='Missouri' & year==2020) %>%
+  na.omit %>%
+  arrange(desc(num_deaths)) %>%
+  head(10) #just get top 10
+
+```
+
+We see the same trends in 2019 and 2020 --- major cardiovascular diseases are the leading cause of death, followed by malignant neoplasms (cancer) and a catch-all category of "all other diseases."
+
+**Putting this finding into words:** Every year between 2018 and 2020, about 20,000 people in Missouri died because of major cardiovascular diseases -- more than any other cause of death. Cancer was the next most common cause of death among Missourians, typically causing around 13,000 deaths each year.
+
+### Which state reported the most deaths?
+
+Similar to the first question, I think this question is most efficiently answered by slightly modifying the search query on the CDC Wonder portal and reading directly from the [html table](https://wonder.cdc.gov/controller/datarequest/D76;jsessionid=2B7A34B4DA2C3A886DA3648CB183?stage=results&action=sort&direction=MEASURE_ASCEND&measure=D76.M4) (grouping by state and selecting all causes).
+
+**Putting this finding into words:** In 2020, California reported more deaths than any other state at nearly 320,000. That works out to about 700 deaths per 100,000 people, the second lowest death rate in the nation. Mississippi, Alabama and West Virginia all reported less than 65,000 deaths in 2020 but have the highest per capita death rates at more than 1,000 deaths per 100,000 people.
+
+### How many people died from firearms? Drugs? Suicide?
+
+```{r}
+#Firearms -- first find all the codes including "firearm"
+
+firearms <- deaths %>%
+  filter(grepl("firearm",icd_10_113_cause_list)) %>% #returning all rows with "firearm"
+  distinct(icd_10_113_cause_list_code) %>% #find the distinct codes
+  pull(icd_10_113_cause_list_code) %>% #pull it into a list
+  as.list
+
+#Now filter the deaths dataframe on that list, group by year and sum up the deaths while omitting the NAs (suppressed values)
+firearm_deaths <- deaths %>%
+  filter(icd_10_113_cause_list_code %in% firearms) %>%
+  na.omit %>%
+  group_by(year) %>%
+  summarise(total_firearm_deaths = sum(num_deaths))
+```
+
+**Putting this finding into words:** In 2018 and 2019, nearly 39,000 Americans each year died in firearm-related deaths, including accidental discharges, assaults, suicides and incidents of unknown motive. In 2020, that number rose to more than 44,000. These counts only include deaths reported publicly through the CDC's data portal. Some firearm deaths are not reported in the portal to protect victims' identities. Therefore, these totals undercount the true number of firearm-related deaths.
+
+```{r}
+#Suicide
+
+suicide <- deaths %>%
+  filter(grepl("suicide",icd_10_113_cause_list)) #returning all rows with "suicide"
+
+#For this, there is the umbrella category of intentional self harm (GR113-124) and then it's further broken down into sub categories of firearm (GR113-125) and other/unspecified (GR113-126)
+
+#I will filter on the broad category of GR113-124
+suicide_deaths <- deaths %>%
+  filter(icd_10_113_cause_list_code == "GR113-124") 
+#Gut check: Notice there are 153 observations -- 3 observations for each state plus DC. There are no NAs (suppressed values) here.
+
+#Now can group by year 
+suicide_deaths <- suicide_deaths %>%
+  group_by(year) %>%
+  summarise(total_suicide_deaths = sum(num_deaths))
+```
+
+**Putting this finding into words:** In 2018, more than 48,000 Americans died by suicide, according to death records kept by the CDC. That number gradually decreased in 2019 and 2020.
+
+```{r}
+#Drugs
+
+#I see drugs listed in the official CDC documentation (https://www.cdc.gov/nchs/data/dvs/Multiple-Cause-Record-Layout-2020.pdf)but not in our slice of data.
+
+```
+
+### What is the most common cause of death for each year?
+
+This is similar to the question about Missouri above but for all states. We don't have to worry too much about taking out the suppressed values because we're interested in the cause of death codes that are most prevalent, not the ones that have few instances and therefore need to be suppressed.
+
+```{r}
+
+us_leading_deaths <- deaths %>%
+  group_by(year, icd_10_113_cause_list) %>%
+  mutate(total_deaths=sum(num_deaths)) %>%
+  select(year, icd_10_113_cause_list, total_deaths) %>%
+  distinct()
+
+```
+
+**Putting this finding into words:** Every year between 2018 and 2020, more Americans have died from major cardiovascular diseases than from any other cause. In 2020, the latest year in which data is available, more than 920,000 Americans died because of major cardiovascular diseases. The next leading non-heart related cause of death was cancer, which killed about 600,000 people in 2020.
+
+### How do Missouri's most common causes of death compare to the rest of the nation?
+
+We need to look at the most common causes of death for every state (as measured by the most number of deaths) for any given year.
+
+```{r}
+#Let's choose 2020 to look at first
+
+top_death_causes_state_2020 <- deaths %>%
+  filter(year==2020) %>%
+  group_by(state) %>%
+  arrange(desc(num_deaths), .by_group = TRUE) %>%
+  top_n(3, num_deaths) #Find the top three leading causes of death per state
+
+#Now 2018
+top_death_causes_state_2018 <- deaths %>%
+  filter(year==2018) %>%
+  group_by(state) %>%
+  arrange(desc(num_deaths), .by_group = TRUE) %>%
+  top_n(3, num_deaths)
+
+#Now 2019
+top_death_causes_state_2019 <- deaths %>%
+  filter(year==2019) %>%
+  group_by(state) %>%
+  arrange(desc(num_deaths), .by_group = TRUE) %>%
+  top_n(3, num_deaths)
+
+#Same story in 2018 and 2019 as in 2020 -- major cardiovascular diseases takes the top spot, followed by cancer
+```
+
+**Putting this finding into words:** Across America, as in Missouri, cardiovascular disease kills more people each year than any other cause. Cancer is the next leading cause of death in every state except New Jersey, where, in 2020, a catch-all category including various infectious and parasitic diseases killed more people than cancer.
+
+### Which common causes of death are increasing from year to year?
+
+```{r}
+#This is screaming for the spread function! That way we can have the yearly values in a horizontal format rather than a vertical one, which will allow us to calculate growth rates in num_deaths
+
+deaths_spread <- deaths %>%
+  na.omit %>% 
+  select(-c(year_code, deaths, population, crude_rate, age_adjusted_rate, num_population)) %>% #Need to get rid of these columns in order for the spread to work properly; otherwise the year data would be in different rows instead of the same row
+  spread(year, num_deaths)
+
+#Now we have our total number of deaths spread out across the 2018, 2019 and 2020 columns in the same row:
+head(deaths_spread)
+
+#Now I want to get nationwide results, so I'll group by the causes (and sum across the states)
+
+deaths_spread_nation <- deaths_spread %>%
+  group_by(icd_10_113_cause_list) %>%
+  na.omit %>%
+  summarize(nation_2018 = sum(`2018`), nation_2019 = sum(`2019`), nation_2020 = sum(`2020`)) 
+
+#Now I want to quantify the rate of increase by calculating a growth rate between 2018 and 2020
+
+options(scipen=999999999) #Stop RStudio from displaying the growth rate below in scientific notation 
+
+death_cause_growth <- deaths_spread_nation %>%
+  mutate(growth_2018_2020 = ((nation_2020-nation_2018)/nation_2018)*100) %>%
+  arrange(desc(nation_2020)) #arrange by leading causes of death in 2020 since the question asks for common causes of death
+```
+
+**Putting this finding into words:** Common heart-related problems and cancer are all increasing year over year. Most common causes of death are also increasing. (Unspecified infectious and parasitic diseases increased dramatically perhaps due to the COVID-19 pandemic.)
+
+Perhaps more interesting are the common causes of death that decreased from 2018 to 2019: chronic lower respiratory diseases; cancers of the trachea, bronchus and lungs; flu; pneumonia; suicide and breast cancer.
