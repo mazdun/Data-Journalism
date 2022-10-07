@@ -1,0 +1,233 @@
+---
+title: "MZ tidycensus exploration"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+```
+
+### Question 1: Are there any counties in the US that have a median age below 30? How many?
+
+```{r}
+#Looking up the variables
+
+acs2021_var <- load_variables(2021, "acs1", cache=TRUE)
+#acs2021_var %>% filter(grepl("median age",label,ignore.case=T))
+
+#We can use B01002_001. This is the estimate for total from the "Median Age by Sex" table
+
+```
+
+```{r}
+#Now finding the median age per county
+
+median_age_county <- get_acs(geography = "county", 
+              variables = c("B01002_001"), 
+              year = 2021,
+              survey = "acs1")
+
+#The 1-year ACS for 2021 only provides data for geographies with populations of 65K or more. That's why it only returns 841 counties. The U.S. has more than 3.1K counties. To get all of the them, I will use the 5-year ACS from 2020.
+
+median_age_county_revised <- get_acs(geography = "county", 
+              variables = c("B01002_001"), 
+              year = 2020)
+
+#Now there are 3,221 county observations.
+
+#We can check on the cleanliness of the data.
+
+colSums(is.na(median_age_county_revised)) > 0 
+
+#There are no missing values
+
+summary(median_age_county_revised)
+  
+```
+
+The median of medians is 41.4 and the mean of medians is 41.59. Pretty close to each other. In one particularly youthful county, the median age is 22. In another not-as-youthful county, the median age is 68. 
+
+```{r}
+#Finding the counties in which the median age is below 30
+
+below_30 <- median_age_county_revised %>%
+  rename(median_age=estimate) %>%
+  filter(median_age<30) %>%
+  arrange(median_age)
+
+nrow(below_30)
+  
+```
+
+There are 58 counties or county equivalents with a median age below 30. (This includes census areas and boroughs in the case of Alaska, parishes in the case of Louisiana and independent cities in the case of Virginia.) De Baca County, New Mexico, and Lexington City, Virginia, are the most youthful county equivalents, with a median age each of about 22.
+
+Lexington City makes sense. It is home to the Virginia Military Institute and Washington and Lee University, both places we'd expect would bring down the median age. De Baca County is tiny (with about 1 person per square mile). It appears to have a detention center. Perhaps this is dragging down the median age?
+
+I wonder how the population breaks down along sex lines. 
+
+```{r}
+
+#Taking a closer look at how age breaks down in De Baca County
+
+age_breakdown_county <- get_estimates(
+  geography = "county",
+  state = "NM",
+  product = "characteristics",
+  breakdown = c("SEX", "AGEGROUP"),
+  breakdown_labels = TRUE,
+  year = 2019
+) 
+
+de_baca_age <- age_breakdown_county %>%
+  filter(NAME=='De Baca County, New Mexico')
+
+#I want to make a population pyramid and for that, I need to do a few things:
+
+# Filter out the rows with "Both Sexes." I only need Male or Female
+# Filter out everything from the AGEGROUP column except the rows with five year bands of ages (like Age 0 to 4, etc.)
+# Make the male numbers negative. This is because in a population pyramid, we need male and female in line with each other along the horizontal axis. One of the sexes needs to be negative.
+
+de_baca_cleaned <- filter(de_baca_age, str_detect(AGEGROUP, "^Age"), 
+                  SEX != "Both sexes") %>%
+  mutate(value = ifelse(SEX == "Male", -value, value))
+
+```
+
+```{r}
+#Now for the population pyramid: 
+
+ggplot(de_baca_cleaned, aes(x = value, y = AGEGROUP, fill = SEX)) + 
+  geom_col() + 
+  theme_minimal()
+```
+
+The population pyramid is a little interesting with a fairly thick base. Also, men outnumber women in a few key age groups (35-39 and 65-69). 
+
+This doesn't seem to add up to a median age of 22. Granted, this is 2019 data in the population pyramid because that is what is compatible with the get_estimates() function. If we look at the median age in the get_estimates table, it's in the 40s. It's strange that that data does not match the data from the get_acs function. Did the median age really change that much between 2019 and 2020? 
+
+I will check Lexington City.
+
+```{r}
+
+#Lexington City
+
+age_breakdown_county_va <- get_estimates(
+  geography = "county",
+  state = "VA",
+  product = "characteristics",
+  breakdown = c("SEX", "AGEGROUP"),
+  breakdown_labels = TRUE,
+  year = 2019
+) 
+
+lexington_age <- age_breakdown_county_va %>%
+  filter(NAME=='Lexington city, Virginia')
+
+lexington_cleaned <- filter(lexington_age, str_detect(AGEGROUP, "^Age"), 
+                  SEX != "Both sexes") %>%
+  mutate(value = ifelse(SEX == "Male", -value, value))
+
+ggplot(lexington_cleaned, aes(x = value, y = AGEGROUP, fill = SEX)) + 
+  geom_col() +
+  theme_minimal()
+
+
+```
+
+This is much more in line with what we would expect for an area with a median age of 22. The younger age group bins have many more people than the older ones.
+
+I'm not quite sure what's going on with De Baca County, New Mexico! 
+
+
+### Question 2: What percentage of the Missouri population lives at 150% of the poverty level? How does that compare to the national rate?
+
+```{r}
+
+#Finding the correct table
+
+#acs2021_var %>% filter(grepl("150",label,ignore.case=T))
+
+#The options are below 100 percent of poverty level, 100-149 percent of poverty and at or above 150 percent
+
+#I will assume we want at or above 150 percent (since we can't separate just at 150% from this data)
+
+#B06012_004 = Total living at or above 150 percent of poverty
+#B06012_001 = Total Pop
+
+poverty <- get_acs(geography = "state", 
+              variables = c("B06012_004", "B06012_001"), 
+              year = 2021,
+              survey = "acs1")
+
+#Need to spread the table to be able to calculate percentage programatically
+
+poverty_cleaned <- poverty %>% 
+  pivot_wider(id_cols = NAME,
+              names_from = variable,
+              values_from = estimate) %>%
+  rename(at_above_150=B06012_004, total=B06012_001) %>%
+  mutate(percent=(at_above_150/total)*100) %>%
+  na.omit() #Removing Puerto Rico, where data is not available
+
+#Comparing it to the nation
+mean(poverty_cleaned$percent)
+	
+```
+
+We can see that 79% of Missouri lives at or above 150% of poverty. Therefore, 21% of Missourians live below 150% of poverty. Nationwide, about 80% of Americans live at or above 150% of poverty. Missouri slightly outperforms the nation. 
+
+
+### Question 3: How has the Columbia, MO population changed in the last five years? What about 10? 
+
+```{r}
+
+#Finding the correct table
+
+#acs2021_var %>% filter(grepl("population",label,ignore.case=T))
+
+#B01003_001 is total population
+
+#Population over last several years. Note: skipping 2020 since that year of data isn't available 
+years <- c(2011:2019,2021)
+names(years) <- years
+
+#Using the map_dfr function to iterate over the years. It's the equivalent of running the part below in the curly brackets several times: for 2011 and then 2012 and 2013, etc. 
+
+como_pop <- map_dfr(years, ~{
+  get_acs(
+    variables = c("B01003_001"),
+    geography = "place",
+    state = "MO",
+    year = .x,
+    survey='acs1'
+  )
+}, .id = "year") %>%
+  filter(NAME=='Columbia city, Missouri')
+
+#Pivoting wider to enable percent change calculations 
+
+como_pop_cleaned <- como_pop %>%
+  pivot_wider(id_cols = NAME,
+              names_from = year,
+              values_from = estimate) %>%
+  mutate(growth_5_years = ((2021-2016)/2016)*100, growth_10_years = ((2021-2011)/2011)*100)
+
+```
+
+```{r}
+#And a simple line graph
+
+como_pop$year <- as.numeric(como_pop$year)
+
+ggplot(como_pop, aes(x=year, y=estimate)) +
+  geom_line() + 
+  theme_minimal() +
+  ggtitle("CoMo Population") +
+  xlab("") + 
+  ylab("Population")
+  
+
+```
+Between 2016 and 2021, Columbia's population increased from about 121,000 people to about 127,000 people, a 25% growth rate. The population was about 110,000 in 2011. That works out to about a 50% increase over the last decade. Population growth slowed a bit in 2018. 
+
