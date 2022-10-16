@@ -1,0 +1,206 @@
+---
+title: "MZ Campaign Finance"
+output: 
+html_notebook: default
+---
+
+### Introduction
+
+Each candidate for federal office (U.S. House of Representatives, U.S. Senate, President) must register with the Federal Election Commission (FEC) and form a Political Action Committee (PAC) to receive contributions. Candidates can have several different kinds of PACs, but everyone has a "principal campaign committee" through which they receive money.
+
+It's an election year: every Representative is up for re-election in an even year, since Reps serve 2-year terms. One third of the Senate is up for re-election every two years because Sens serve 6-year terms. Candidates can receive money even if they're not running for re-election, but though there are limits to how much any entity can give directly to a candidate. There are no limits for receiving or spending money as independent expenditures, which support or oppose a candidate but don't coordinate with that candidate.
+
+Missouri has 8 House seats and 2 Senate seats; only 1 Senate seat is up for re-election in 2022; Roy Blunt is not running for re-election so it's an open seat. Josh Hawley won't be up for re-election until 2024; however senators are always raising money whether they're up for re-election in the current cycle or not.
+
+### Documentation
+
+-   [Committee donations & independent expenditures](https://www.fec.gov/campaign-finance-data/contributions-committees-candidates-file-description/)
+-   [Candidates](https://www.fec.gov/campaign-finance-data/candidate-master-file-description/)
+-   [Committees](https://www.fec.gov/campaign-finance-data/committee-master-file-description/)
+
+### Setup
+
+Load your packages
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+Load the data tables
+
+```{r}
+
+# A note: I want to coerce some of the columns in the "transactions" table into character columns, so I'm using the col_types argument within read_csv. You can list data types for each column. Notice the one d, which stands for "double", or number, in the 15th position. This is for the transaction_amt column.
+
+transactions <- read_csv("https://github.com/eklucas/ADJF2022/raw/main/data/campfin/transactions.csv", col_types=c("ccccccccccccccdccccccc"))
+
+transaction_types <- read_csv("https://github.com/eklucas/ADJF2022/raw/main/data/campfin/transaction_types.csv")
+committees <- read_csv("https://github.com/eklucas/ADJF2022/raw/main/data/campfin/committees.csv")
+candidates <- read_csv("https://github.com/eklucas/ADJF2022/raw/main/data/campfin/candidates.csv")
+```
+
+Campaign finance data, like many datasets, comes in relational tables. The FEC stores information about candidates and committees in separate files from the main contributions data to save space. In order to fully understand the data you need to join these tables together to access the important information in each. There's also a lookup table in here that describes the transaction types, which are important to pay attention to. For example: the transaction type "24A" indicates that the amount is an independent expenditure in opposition of the noted candidate. "24E" is an expenditure in support of the noted candidate.
+
+### Get to know the data
+
+I'll offer up some pointers on how this data works, but you should do some exploring on your own as well.
+
+Start by looking at the different transaction types in this dataset, which is a slice of the main data.
+
+```{r}
+transactions %>% count(transaction_tp)
+```
+
+There are only a handful of transaction types in here: what are they? To find out, we could look them up in the `transaction_types` table, or we could bring in the `transaction_desc` field from that table, using a join.
+
+Which type of join? We don't care about all the transaction types in that table, only the transaction types that are in our main table. So we'll use a **left_join** (returns every row from table x and only matches from table y). The shared column in these two tables is `transaction_tp`.
+
+```{r}
+transactions %>% 
+  count(transaction_tp) %>%
+  left_join(transaction_types, by="transaction_tp")
+```
+
+Most of these transactions are "Contributions made to nonaffiliated committees", which basically means PACs that are run by companies, labor unions, and special interest groups giving money to candidate committees. There are some independent expenditures in here as well.
+
+Next look at which candidates are included in this dataset. I said it was a slice of the main data; I only included money going to certain candidates. The `transactions` table has a cand_id, an id that is unique for each candidate running for office. But we can't tell who the person is by looking at the id, so we need to join to the `candidates` table.
+
+Which type of join? Let's start with the candidates table and see which candidates match the cand_ids in our `transactions` table. We don't yet care about the information in transactions, so we'll use a semi_join:
+
+```{r}
+candidates %>% semi_join(transactions, by="cand_id")
+```
+
+35 candidates are in our data. What characterizes them?
+
+```{r}
+# Which states are they running in?
+candidates %>% 
+  semi_join(transactions, by="cand_id") %>% 
+  count(office_st)
+
+# How many are vying for the House vs the Senate?
+candidates %>% 
+  semi_join(transactions, by="cand_id") %>% 
+  count(office)
+
+# How many in each party?
+candidates %>% 
+  semi_join(transactions, by="cand_id") %>% 
+  count(party)
+
+```
+
+Finally, who is spending the money? These transaction types all indicate spending rather than receiving money. So the committees spending the money are in the `cmte_id` field of the `transactions` table. But to find out who they are, we need the `committees` table. Write a join to find out which committees are in the data:
+
+```{r}
+
+committees %>% 
+  semi_join(transactions, by="cmte_id") 
+```
+
+One final note about the data: the `name` column in the transactions table points to different entities depending on the transaction type. For independent expenditures (24A and 24E), the `name` is the vendor who received the money for the ad or whatever the committee spent money on to support or oppose a candidate. For the other committee contributions (24K) the `name` is the committee that received the money. For in-kind contributions (24Z) it can be the candidate receiving the item (things that have monetary value but are not actual money), or it might be another entity receiving the item.
+
+Now: explore the data! Try answering the questions below. You're also free to explore other things that interest you. Spend some time with the data and turn in your script by Monday.
+
+### Which Senate candidate is receiving the most money from committees? Which House candidate?
+
+```{r}
+
+#For receiving the most money, I want to look at 24K (the companies/unions/etc. giving to candidate committees), 24E (the independent expenditures made on behalf of a candidate since this still counts as the candidate receiving money) and 24Z (things that are not actual money but still have value). There aren't many 24Z.
+
+senate_receiving <- transactions %>%
+  left_join(candidates, by='cand_id') %>%
+  filter(transaction_tp %in% c('24K','24E','24Z')) %>%
+  filter(office=='S') %>%
+  group_by(cand_name) %>%
+  summarize(total_received = sum(transaction_amt)) %>%
+  arrange(desc(total_received))
+
+house_receiving <- transactions %>%
+  left_join(candidates, by='cand_id') %>%
+  filter(transaction_tp %in% c('24K','24E','24Z')) %>%
+  filter(office=='H') %>%
+  group_by(cand_name) %>%
+  summarize(total_received = sum(transaction_amt)) %>%
+  arrange(desc(total_received))
+
+```
+
+On the Senate side, Eric Schmitt is receiving the most from committees at more than \$73 million. On the House side, Ann Wagner is hauling in the most at more than \$1.4 million.
+
+### Which party has the most independent expenditures spent against it? For it?
+
+```{r}
+#Independent expenditures against a candidate are code 24A. For a candidate is 24E
+
+party_against <- transactions %>%
+  left_join(candidates, by='cand_id') %>%
+  filter(transaction_tp == '24A') %>%
+  group_by(party) %>%
+  summarize(total_against = sum(transaction_amt)) %>%
+  arrange(desc(total_against))
+
+party_for <- transactions %>%
+  left_join(candidates, by='cand_id') %>%
+  filter(transaction_tp == '24E') %>%
+  group_by(party) %>%
+  summarize(total_against = sum(transaction_amt)) %>%
+  arrange(desc(total_against))
+
+
+```
+
+\$15.5 million has been spent against Republicans. That's more than 90 times more than the amount spent against Democrats: about \$171,000. 
+
+Meanwhile, committees have spent about \$12.1 million for Republican candidates, compared with only \$2.7 million for Democratic candidates. Independents have also hauled in nearly \$150,000 from committees.
+
+### Create a table with one row for each candidate that lists total independent expenditures spent for and against that candidate. Is there anything interesting or surprising here?
+
+```{r}
+
+#Going to do two simple joins and then one final join since this is the week on joins. This can also be done with spread or pivot wider.
+
+ind_exp_candidates_against <- transactions %>%
+  left_join(candidates, by='cand_id') %>%
+  filter(transaction_tp == '24A') %>%
+  group_by(cand_name) %>%
+  summarize(total_against = sum(transaction_amt)) 
+
+ind_exp_candidates_for <- transactions %>%
+  left_join(candidates, by='cand_id') %>%
+  filter(transaction_tp == '24E') %>%
+  group_by(cand_name) %>%
+  summarize(total_for = sum(transaction_amt))
+
+#Right off the bat, I notice that there are more candidates that are receiving favorable independent expenditures (20) than those that are having committees spend money against them (11).
+
+#Now for the join
+ind_exp_table <- ind_exp_candidates_for %>%
+  full_join(ind_exp_candidates_against, by = 'cand_name') %>%
+  mutate(across(where(is.numeric), tidyr::replace_na, 0)) #There are NA values where there were no expenditures. I will replace this with 0's in case I wanted to do any kind of analysis on the numbers
+
+#There's the basic table! Let's say I wanted to go a little deeper and look for trends, I could append the party and office to the table, so I could spot some trends
+
+ind_exp_table_expanded <- ind_exp_table %>%
+  left_join(select(candidates, cand_name, office, party), by = 'cand_name') #Here I'm using the select function coupled with a left join because I want only the "office" and "party" columns from the candidates table, while still only returning the rows from the left table, ind_exp_table
+
+#Some further analytics:
+ind_exp_table_expanded_summary <- ind_exp_table_expanded %>%
+  group_by(office, party) %>%
+  summarize(total_for = sum(total_for), total_against = sum(total_against))
+
+```
+
+Most of the entries in this table are Republican. They are pretty evenly split between House (11) and Senate (10). However, the disparities in spending are pretty stark. There's a ton of money being spent for and against Senate Republicans: \$10.2 million for and \$11.9 million against. In contrast, there is almost no money in the independent expenditure realm for Democrats, either for or against. There are smaller dollar expenditures in the House, as one might expect. However, there is almost two times more money being spent against House Republicans than is being spent for them.
+
+### Are there any PACs giving money to candidates that are based in Missouri? Often local companies spend money on federal elections.
+
+```{r}
+local_committees <- committees %>% 
+  semi_join(transactions, by="cmte_id") %>%
+  filter(cmte_st=='MO')
+```
+
+Yes! There are 52 of them, including two here in CoMo: HEALTH CARE LEADERSHIP COMMITTEE and MISSOURIANS FOR TRUTH PAC.
